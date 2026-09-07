@@ -1,0 +1,15 @@
+# VERIFAI — OCR + MRZ Subsystem Dependencies
+# Core data models and schema validation
+pydantic>=2.7.0
+
+# Computer vision and image preprocessing (resizing, CLAHE, deskew, binarization)
+opencv-python-headless>=4.10.0
+numpy>=1.26.0
+pillow>=10.0.0
+
+# Deep learning OCR detection and recognition engine
+paddleocr>=2.8.0
+paddlepaddle>=2.6.0
+
+# Test runner and verification framework
+pytest>=8.0.0
