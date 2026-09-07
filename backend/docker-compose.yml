@@ -1,0 +1,68 @@
+# VERIFAI — Docker Compose (Local Development)
+# ===============================================
+#
+# WHAT IS DOCKER COMPOSE:
+# Runs multiple Docker containers together. We need:
+# 1. PostgreSQL database
+# 2. FastAPI backend
+#
+# HOW TO USE:
+#   docker compose up        # Start everything (logs visible)
+#   docker compose up -d     # Start in background
+#   docker compose down      # Stop everything
+#   docker compose down -v   # Stop and DELETE database data
+#
+# FIRST TIME:
+#   docker compose up --build   # Build the backend image first
+#
+# After starting, visit:
+#   http://localhost:8000       # API root
+#   http://localhost:8000/docs  # Swagger UI (interactive API testing)
+
+services:
+  # ── PostgreSQL Database ─────────────────────────────────────────
+  postgres:
+    image: postgres:16          # Official PostgreSQL 16 image
+    container_name: verifai-db
+    environment:
+      POSTGRES_USER: verifai          # Database username
+      POSTGRES_PASSWORD: verifai_dev  # Database password (dev only!)
+      POSTGRES_DB: verifai_db         # Database name
+    ports:
+      - "5432:5432"             # Expose on localhost:5432
+    volumes:
+      # Named volume persists data between container restarts
+      # Without this, your data disappears when you stop the container
+      - verifai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Docker checks if PostgreSQL is ready before starting the backend
+      test: ["CMD-SHELL", "pg_isready -U verifai -d verifai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ─────────────────────────────────────────────
+  backend:
+    build: .                    # Build from the Dockerfile in this directory
+    container_name: verifai-backend
+    environment:
+      # Use 'postgres' as host because that's the service name above
+      # Docker Compose creates a network where services find each other by name
+      DATABASE_URL: postgresql+asyncpg://verifai:verifai_dev@postgres:5432/verifai_db
+      SECRET_KEY: dev-secret-key-change-in-production
+    ports:
+      - "8000:8000"             # Expose on localhost:8000
+    depends_on:
+      postgres:
+        condition: service_healthy  # Wait for PostgreSQL to be ready
+    volumes:
+      # Mount code directory for hot-reload during development
+      # Changes to Python files will auto-restart the server
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# ── Named Volumes ─────────────────────────────────────────────────
+# This tells Docker to create a persistent storage volume
+volumes:
+  verifai_pgdata:
+

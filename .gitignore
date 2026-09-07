@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── VERIFAI Project Specific ──────────────────────────────────────
+# Uploaded document images (potentially sensitive, never commit)
+uploads/
+# Local database files
+*.db

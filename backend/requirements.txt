@@ -1,0 +1,31 @@
+# VERIFAI Backend Dependencies
+# ==============================
+# Pin minimum versions, not exact versions, for hackathon flexibility.
+# Run: pip install -r requirements.txt
+
+# ── Web Framework ─────────────────────────────────────────────────
+fastapi>=0.115.0          # The web framework — handles HTTP routing, validation, docs
+uvicorn[standard]>=0.30.0 # ASGI server — actually runs the FastAPI app
+
+# ── Database ──────────────────────────────────────────────────────
+sqlalchemy[asyncio]>=2.0.0  # ORM — maps Python classes to database tables
+asyncpg>=0.29.0             # Async PostgreSQL driver (fastest available)
+alembic>=1.13.0             # Database migration tool (for schema changes)
+
+# ── Data Validation ───────────────────────────────────────────────
+pydantic>=2.0.0             # Data validation — ensures API inputs are correct
+pydantic-settings>=2.0.0    # Reads config from .env files
+email-validator>=2.0.0      # Validates email format in user registration
+
+# ── Authentication ────────────────────────────────────────────────
+python-jose[cryptography]>=3.3.0  # JWT token creation and verification
+passlib[bcrypt]>=1.7.4            # Password hashing (bcrypt)
+
+# ── File Upload ───────────────────────────────────────────────────
+python-multipart>=0.0.9    # Required by FastAPI for file upload endpoints
+
+# ── Testing ───────────────────────────────────────────────────────
+pytest>=8.0.0              # Test framework
+pytest-asyncio>=0.23.0     # Async test support (our endpoints are async)
+httpx>=0.27.0              # HTTP client for testing FastAPI without a server
+
