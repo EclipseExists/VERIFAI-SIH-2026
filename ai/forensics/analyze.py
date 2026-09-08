@@ -1,116 +1,79 @@
-"""
-VERIFAI — Forensics Backend Integration Adapter
-=================================================
-
-This file bridges the forensics teammate's actual code to the backend API contract.
-
-The teammate's code (ela.py, noise_analysis.py, forensic_analysis.py) uses:
-  - relative imports (from ela import ...)
-  - hardcoded output paths (ela_output.jpg, noise_output.jpg)
-  - returns a different dict structure than what the backend expects
-
-This adapter:
-  1. Calls their functions with proper paths
-  2. Translates their output format to our backend contract
-  3. Saves evidence images next to the source document (not in cwd)
-"""
-
 import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+
+from ai.forensics.ela import perform_ela
+from ai.forensics.noise_analysis import analyze_noise
 
 
 def analyze_document(image_path: str) -> Dict[str, Any]:
     """
-    Backend integration wrapper for forensics.
-
-    Args:
-        image_path: Path to the document image file.
+    Run ELA and noise analysis on a document image.
+    Bridged to the backend API contract.
 
     Returns:
         Dict matching the backend forensics contract:
-        - ela_score: float | None (0.0-1.0)
+        - ela_score: float | None
         - suspicious_regions: list
-        - noise_inconsistency_score: float | None (0.0-1.0)
-        - overall_manipulation_probability: float | None (0.0-1.0)
+        - noise_inconsistency_score: float | None
+        - overall_manipulation_probability: float | None
         - ela_image_path: str | None
         - noise_image_path: str | None
     """
-    # Build evidence output paths next to the source image
-    img_dir = str(Path(image_path).parent)
-    img_stem = Path(image_path).stem
-    ela_output = os.path.join(img_dir, f"{img_stem}_ela.jpg")
-    noise_output = os.path.join(img_dir, f"{img_stem}_noise.jpg")
+    input_path = Path(image_path)
 
-    ela_result = None
-    noise_result = None
+    if not input_path.exists():
+        raise FileNotFoundError(f"Document image not found: {image_path}")
 
-    # --- Call ELA ---
-    try:
-        from ai.forensics.ela import perform_ela
-        ela_result = perform_ela(image_path, output_path=ela_output)
-    except Exception as e:
-        print(f"[VERIFAI] ELA analysis failed: {e}")
+    # Create evidence paths next to the source document
+    output_dir = input_path.parent
+    file_stem = input_path.stem
 
-    # --- Call Noise Analysis ---
-    try:
-        from ai.forensics.noise_analysis import analyze_noise
-        noise_result = analyze_noise(image_path, output_path=noise_output)
-    except Exception as e:
-        print(f"[VERIFAI] Noise analysis failed: {e}")
+    ela_path = output_dir / f"{file_stem}_ela.png"
+    noise_path = output_dir / f"{file_stem}_noise.png"
 
-    # --- Translate to backend contract ---
-    # The teammate's code currently returns score=None (placeholder).
-    # We compute a basic score from the ELA image if available.
-    ela_score = None
-    noise_score = None
+    # Run ELA analysis
+    ela_result = perform_ela(
+        image_path,
+        output_path=str(ela_path)
+    )
 
-    if ela_result and ela_result.get("score") is not None:
-        ela_score = ela_result["score"]
-    elif ela_result and os.path.exists(ela_output):
-        # Compute a basic ELA score from the evidence image
-        ela_score = _compute_ela_score_from_image(ela_output)
+    # Run noise analysis
+    noise_result = analyze_noise(
+        image_path,
+        output_path=str(noise_path)
+    )
 
-    if noise_result and noise_result.get("score") is not None:
-        noise_score = noise_result["score"]
-    elif noise_result and os.path.exists(noise_output):
-        noise_score = _compute_noise_score_from_image(noise_output)
+    # Check if we got valid scores back, otherwise compute defaults based on evidence presence
+    ela_score = ela_result.get("score")
+    if ela_score is None and ela_path.exists():
+        ela_score = _compute_ela_score_from_image(str(ela_path))
+        
+    noise_score = noise_result.get("score")
+    if noise_score is None and noise_path.exists():
+        noise_score = _compute_noise_score_from_image(str(noise_path))
 
-    # Overall manipulation probability: average of available scores
+    # Calculate overall probability if scores exist
     scores = [s for s in [ela_score, noise_score] if s is not None]
     overall_prob = sum(scores) / len(scores) if scores else None
 
-    # Build suspicious regions from evidence
-    suspicious_regions = []
-    if ela_result and ela_result.get("evidence_path"):
-        suspicious_regions.append({
-            "signal": "ELA",
-            "evidence_path": ela_result["evidence_path"],
-            "explanation": ela_result.get("explanation", ""),
-        })
-    if noise_result and noise_result.get("evidence_path"):
-        suspicious_regions.append({
-            "signal": "Noise Consistency",
-            "evidence_path": noise_result["evidence_path"],
-            "explanation": noise_result.get("explanation", ""),
-        })
-
-    return {
+    # Store visual forensic evidence matching backend schema
+    forensic_evidence = {
         "ela_score": ela_score,
-        "suspicious_regions": suspicious_regions,
+        "suspicious_regions": noise_result.get("suspicious_regions", []),
         "noise_inconsistency_score": noise_score,
         "overall_manipulation_probability": overall_prob,
-        "ela_image_path": ela_output if os.path.exists(ela_output) else None,
-        "noise_image_path": noise_output if os.path.exists(noise_output) else None,
+        "ela_image_path": str(ela_path) if ela_path.exists() else None,
+        "noise_image_path": str(noise_path) if noise_path.exists() else None
     }
+
+    return forensic_evidence
 
 
 def _compute_ela_score_from_image(ela_image_path: str) -> float:
     """
     Compute a normalized ELA anomaly score from the ELA evidence image.
-
-    Higher mean brightness in the ELA image = more compression inconsistency.
-    Score is 0.0 (clean) to 1.0 (highly anomalous).
+    Higher mean brightness = more compression inconsistency.
     """
     try:
         from PIL import Image
@@ -118,19 +81,16 @@ def _compute_ela_score_from_image(ela_image_path: str) -> float:
         img = Image.open(ela_image_path).convert("L")
         arr = np.array(img, dtype=float)
         mean_val = arr.mean()
-        # Normalize: typical passport ELA mean is 5-15, suspicious is 30+
-        # Map 0-50 range to 0.0-1.0
         score = min(mean_val / 50.0, 1.0)
         return round(score, 3)
     except Exception:
-        return 0.15  # safe default — low but not zero
+        return 0.15
 
 
 def _compute_noise_score_from_image(noise_image_path: str) -> float:
     """
     Compute noise inconsistency from the noise evidence image.
-
-    High standard deviation in the noise map = inconsistent noise patterns.
+    High standard deviation = inconsistent noise patterns.
     """
     try:
         from PIL import Image
@@ -138,9 +98,14 @@ def _compute_noise_score_from_image(noise_image_path: str) -> float:
         img = Image.open(noise_image_path).convert("L")
         arr = np.array(img, dtype=float)
         std_val = arr.std()
-        # Normalize: typical is 10-20, suspicious is 40+
         score = min(std_val / 60.0, 1.0)
         return round(score, 3)
     except Exception:
         return 0.15
 
+
+if __name__ == "__main__":
+    image_path = input("Enter the image path: ")
+    evidence = analyze_document(image_path)
+    print("\nForensic Evidence:")
+    print(evidence)

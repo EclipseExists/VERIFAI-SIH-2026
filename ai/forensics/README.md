@@ -42,4 +42,17 @@ Each signal contains:
 ELA and noise analysis provide forensic indicators and evidence, not definitive proof that a document is forged.
 
 The final risk assessment should combine multiple signals and remain subject to human officer review.
-At the current stage, score and anomaly status are placeholders for integration with the risk engine. The module currently generates forensic evidence rather than making a definitive forgery decision.
+At the current stage, score and anomaly status are placeholders for integration with the risk engine. The module currently generates forensic evidence rather than making a definitive forgery decision.                             ## Integration Status
+
+The forensics module currently provides:
+
+- ELA evidence generation
+- Noise consistency evidence generation
+- Evidence image paths
+- Backend-compatible `analyze_document(image_path)` interface
+
+Numerical forensic scores and the overall manipulation probability are
+currently left for scoring logic defined during Risk Engine integration.
+
+ELA and noise analysis are forensic indicators and do not independently
+prove that a document is forged.
