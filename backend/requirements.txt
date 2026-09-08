@@ -29,3 +29,12 @@ pytest>=8.0.0              # Test framework
 pytest-asyncio>=0.23.0     # Async test support (our endpoints are async)
 httpx>=0.27.0              # HTTP client for testing FastAPI without a server
 
+# ── AI Module Dependencies ────────────────────────────────────────
+# These are needed by the ai/ teammate modules (ocr, mrz, face, forensics)
+opencv-python-headless>=4.8.0   # Image processing (headless = no GUI needed on server)
+numpy>=1.24.0                   # Math/array operations for all AI modules
+Pillow>=10.0.0                  # Image manipulation (forensics ELA + noise)
+paddlepaddle>=2.5.0             # PaddleOCR backend engine
+paddleocr>=2.7.0                # OCR text extraction from document images
+deepface>=0.0.89                # Face verification (used by ai/face/verify.py)
+tf-keras                        # DeepFace needs this as a backend

@@ -1,32 +1,20 @@
 """
-VERIFAI — Risk Assessment Engine
-===================================
+VERIFAI — Risk Assessment Engine (Integrated)
+================================================
 
 POST /api/v1/cases/{case_id}/risk-assessment
 
-This is the BRAIN of VERIFAI. It:
-1. Collects all signals from all AI modules (OCR, MRZ, face, forensics)
-2. Scores each signal (adds or subtracts risk points)
-3. Computes a total risk score (0-100)
-4. Assigns a risk band (low / medium / high)
-5. Stores the full assessment for the officer to review
+Combines:
+1. Our hardcoded signal collection (OCR, MRZ, face, forensics readings from DB)
+2. Teammate's RiskEngine for weighted scoring
+3. Teammate's DocumentValidationEngine for date/field validation
+4. Database storage for audit trail
 
-HOW RISK SCORING WORKS (non-technical):
-- Every AI module produces "signals"
-- Each signal says: "this INCREASES risk by X points" or "DECREASES risk by Y points"
-- We add them all up
-- 0-39 = LOW risk   (proceed with caution)
-- 40-69 = MEDIUM risk (enhanced scrutiny)
-- 70-100 = HIGH risk  (strong suspicion, recommend escalation)
-
-This is the AI's RECOMMENDATION ONLY. The officer makes the final call.
-
-HARDCODED SCORING TABLE:
-We don't use ML here — we use explicit, explainable rules that a judge can read.
-This is intentional: "the algorithm gives 30 points for a failed MRZ checksum
-because ICAO 9303 states that checksum failure indicates data alteration."
+The officer sees: score (0-100), band (low/medium/high), and every signal explained.
 """
 
+import sys
+import os
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,43 +29,34 @@ from app.schemas.risk import RiskAssessmentOut
 router = APIRouter()
 PLACEHOLDER_OFFICER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
+# Add project root for ai/ imports
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-# ── Scoring Rules ──────────────────────────────────────────────────
-# Each rule is: (condition_description, score_delta, explanation_for_officer)
-# Positive delta = increases risk, negative = decreases risk.
-# These are intentionally simple so a judge can read and understand them.
 
-def _compute_risk(
-    mrz_result,
-    ocr_result,
-    face_result,
-    forensics_result,
-) -> tuple[float, str, list[dict]]:
+def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_result):
     """
-    Core risk computation logic.
+    Collect risk signals from all AI module results stored in the database.
 
-    Returns (score, band, signals_list).
-    score is 0-100.
-    band is 'low', 'medium', or 'high'.
-    signals_list is the list of individual signal contributions.
+    Each signal is a plain dict that maps directly to the RiskSignal DB model.
+    Uses the teammate's RiskEngine for final scoring.
     """
-    score = 0.0
     signals = []
 
     # ── MRZ Signals ────────────────────────────────────────────────
     if mrz_result and not mrz_result.is_stub:
         if not mrz_result.mrz_present:
             signals.append({
-                "signal_name": "MRZ_NOT_FOUND",
+                "signal_name": "mrz_missing",
                 "direction": "increases_risk",
                 "magnitude": 25.0,
-                "explanation": "No Machine-Readable Zone (MRZ) detected. Expected for a passport.",
+                "explanation": "No Machine-Readable Zone (MRZ) detected on the document.",
                 "source_module": "mrz",
             })
-            score += 25.0
         elif mrz_result.checksum_valid is False:
             signals.append({
-                "signal_name": "MRZ_CHECKSUM_FAILURE",
+                "signal_name": "mrz_checksum_failure",
                 "direction": "increases_risk",
                 "magnitude": 40.0,
                 "explanation": (
@@ -86,64 +65,58 @@ def _compute_risk(
                 ),
                 "source_module": "mrz",
             })
-            score += 40.0
         elif mrz_result.checksum_valid is True:
             signals.append({
-                "signal_name": "MRZ_CHECKSUM_PASS",
+                "signal_name": "quality_check_passed",
                 "direction": "decreases_risk",
                 "magnitude": 10.0,
                 "explanation": "All MRZ checksums validated. Document data is internally consistent.",
                 "source_module": "mrz",
             })
-            score = max(0.0, score - 10.0)
 
     # ── Face Verification Signals ──────────────────────────────────
     if face_result:
         if face_result.band == "mismatch":
             signals.append({
-                "signal_name": "FACE_MISMATCH",
+                "signal_name": "face_mismatch",
                 "direction": "increases_risk",
                 "magnitude": 45.0,
                 "explanation": (
-                    f"Face similarity score {face_result.similarity_score:.2f} — below mismatch threshold (0.50). "
-                    "The person's face does not match the document photo."
+                    f"Face similarity score {face_result.similarity_score:.2f} — "
+                    "below mismatch threshold. Person's face does not match the document photo."
                 ),
                 "source_module": "face",
             })
-            score += 45.0
         elif face_result.band == "uncertain":
             signals.append({
-                "signal_name": "FACE_UNCERTAIN",
+                "signal_name": "face_match_uncertain",
                 "direction": "increases_risk",
                 "magnitude": 20.0,
                 "explanation": (
-                    f"Face similarity score {face_result.similarity_score:.2f} — uncertain zone (0.50-0.60). "
+                    f"Face similarity score {face_result.similarity_score:.2f} — uncertain zone. "
                     "Officer should manually compare faces."
                 ),
                 "source_module": "face",
             })
-            score += 20.0
         elif face_result.band == "match":
             signals.append({
-                "signal_name": "FACE_MATCH",
+                "signal_name": "good_document_quality",
                 "direction": "decreases_risk",
                 "magnitude": 10.0,
                 "explanation": (
-                    f"Face similarity score {face_result.similarity_score:.2f} — match (>=0.60). "
+                    f"Face similarity score {face_result.similarity_score:.2f} — match. "
                     "Person's face matches the document photo."
                 ),
                 "source_module": "face",
             })
-            score = max(0.0, score - 10.0)
         elif face_result.band == "error":
             signals.append({
-                "signal_name": "FACE_DETECTION_FAILED",
+                "signal_name": "face_mismatch",
                 "direction": "increases_risk",
                 "magnitude": 15.0,
                 "explanation": "Face could not be detected in one of the images. Re-capture recommended.",
                 "source_module": "face",
             })
-            score += 15.0
 
     # ── Forensics Signals ──────────────────────────────────────────
     if forensics_result and not forensics_result.is_stub:
@@ -151,19 +124,17 @@ def _compute_risk(
         if prob is not None:
             if prob >= 0.7:
                 signals.append({
-                    "signal_name": "HIGH_MANIPULATION_PROBABILITY",
+                    "signal_name": "forensic_anomaly_detected",
                     "direction": "increases_risk",
                     "magnitude": 35.0,
                     "explanation": (
-                        f"Forensic analysis indicates {prob:.0%} probability of digital manipulation. "
-                        "Suspicious regions detected in the document image."
+                        f"Forensic analysis indicates {prob:.0%} probability of digital manipulation."
                     ),
                     "source_module": "forensics",
                 })
-                score += 35.0
             elif prob >= 0.4:
                 signals.append({
-                    "signal_name": "MODERATE_MANIPULATION_PROBABILITY",
+                    "signal_name": "forensic_anomaly",
                     "direction": "increases_risk",
                     "magnitude": 15.0,
                     "explanation": (
@@ -172,49 +143,146 @@ def _compute_risk(
                     ),
                     "source_module": "forensics",
                 })
-                score += 15.0
 
     # ── OCR Signals ────────────────────────────────────────────────
     if ocr_result and not ocr_result.is_stub:
         low_conf_fields = [
-            field for field, conf in ocr_result.field_confidence.items()
+            field for field, conf in (ocr_result.field_confidence or {}).items()
             if conf < 0.60
         ]
         if low_conf_fields:
             signals.append({
-                "signal_name": "OCR_LOW_CONFIDENCE",
+                "signal_name": "mandatory_field_missing",
                 "direction": "increases_risk",
                 "magnitude": 10.0,
                 "explanation": (
                     f"OCR confidence is low for: {', '.join(low_conf_fields)}. "
-                    "These fields may be unreadable or illegible."
+                    "These fields may be unreadable."
                 ),
                 "source_module": "ocr",
             })
-            score += 10.0
+
+    # ── Document Validation (teammate's engine) ────────────────────
+    # Run date/field validation using OCR-extracted data
+    if ocr_result and not ocr_result.is_stub and ocr_result.structured_fields:
+        try:
+            from ai.risk_engine.schemas.validation import DocumentValidationInput
+            from ai.risk_engine.services.validation.validator import DocumentValidationEngine
+
+            fields = ocr_result.structured_fields
+            val_input = DocumentValidationInput(
+                document_id=str(ocr_result.document_id),
+                case_id=str(case_id),
+                doc_type="passport",
+                doc_number=fields.get("doc_number"),
+                expiry_date=fields.get("expiry"),
+                dob=fields.get("dob"),
+                issuing_country=fields.get("issuing_state"),
+                structured_fields=fields,
+            )
+
+            validator = DocumentValidationEngine()
+            val_result = validator.validate(val_input)
+
+            # Convert failed validation checks to risk signals
+            for check in val_result.checks:
+                if not check.passed:
+                    if check.rule == "expiry_not_past":
+                        sig_name = "document_expired"
+                    elif check.rule == "dob_sanity":
+                        sig_name = "dob_in_future" if "future" in check.explanation else "dob_mismatch"
+                    elif check.rule == "mandatory_fields_present":
+                        sig_name = "mandatory_field_missing"
+                    elif check.rule == "doc_number_format":
+                        sig_name = "doc_number_format_mismatch"
+                    else:
+                        sig_name = f"validation_{check.rule}_failed"
+
+                    signals.append({
+                        "signal_name": sig_name,
+                        "direction": "increases_risk",
+                        "magnitude": 15.0,
+                        "explanation": check.explanation,
+                        "source_module": "validation",
+                    })
+        except Exception as e:
+            # If validation engine fails, don't crash the whole assessment
+            print(f"[VERIFAI] Document validation skipped: {e}")
 
     # ── No signals at all ─────────────────────────────────────────
     if not signals:
         signals.append({
-            "signal_name": "NO_ANALYSIS_COMPLETE",
+            "signal_name": "no_analysis_complete",
             "direction": "neutral",
             "magnitude": 0.0,
             "explanation": "No AI modules have produced results yet. Run OCR, MRZ, face, and forensics first.",
             "source_module": "mrz",
         })
 
-    # ── Clamp score to 0-100 ──────────────────────────────────────
-    score = max(0.0, min(100.0, score))
+    return signals
 
-    # ── Band assignment ───────────────────────────────────────────
-    if score >= 70:
-        band = "high"
-    elif score >= 40:
-        band = "medium"
-    else:
-        band = "low"
 
-    return score, band, signals
+def _compute_final_score(signals):
+    """
+    Use the teammate's RiskEngine to compute the weighted score.
+    Falls back to simple summation if the engine isn't available.
+    """
+    try:
+        from ai.risk_engine.services.risk_engine.engine import RiskEngine
+        from ai.risk_engine.schemas.risk import RiskSignal as RESignal, SignalDirection, SourceModule
+
+        engine = RiskEngine()
+
+        # Convert our signal dicts to the teammate's RiskSignal objects
+        re_signals = []
+        for s in signals:
+            direction_map = {
+                "increases_risk": SignalDirection.INCREASES_RISK,
+                "decreases_risk": SignalDirection.DECREASES_RISK,
+                "neutral": SignalDirection.NEUTRAL,
+            }
+            source_map = {
+                "ocr": SourceModule.OCR,
+                "mrz": SourceModule.MRZ,
+                "face": SourceModule.FACE,
+                "forensics": SourceModule.FORENSICS,
+                "validation": SourceModule.VALIDATION,
+                "consistency": SourceModule.CONSISTENCY,
+            }
+            # Magnitude needs to be normalized to 0-1 for the RiskEngine
+            raw_mag = s["magnitude"]
+            normalized_mag = min(raw_mag / 100.0, 1.0) if raw_mag > 1.0 else raw_mag
+
+            re_signals.append(RESignal(
+                case_id="scoring",
+                signal_name=s["signal_name"],
+                direction=direction_map.get(s["direction"], SignalDirection.NEUTRAL),
+                magnitude=normalized_mag,
+                explanation=s["explanation"],
+                source_module=source_map.get(s["source_module"], SourceModule.VALIDATION),
+            ))
+
+        result = engine.evaluate(case_id="scoring", signals=re_signals)
+        return result.overall_score, result.risk_band.value
+
+    except Exception as e:
+        print(f"[VERIFAI] RiskEngine fallback: {e}")
+        # Simple fallback: sum up magnitude directly
+        score = 0.0
+        for s in signals:
+            if s["direction"] == "increases_risk":
+                score += s["magnitude"]
+            elif s["direction"] == "decreases_risk":
+                score = max(0.0, score - s["magnitude"])
+
+        score = max(0.0, min(100.0, score))
+        if score >= 70:
+            band = "high"
+        elif score >= 40:
+            band = "medium"
+        else:
+            band = "low"
+        return score, band
 
 
 @router.post(
@@ -223,8 +291,9 @@ def _compute_risk(
     status_code=status.HTTP_201_CREATED,
     summary="Compute risk assessment",
     description=(
-        "Aggregate all AI signals (OCR, MRZ, face, forensics) into a single risk score. "
-        "Returns a score (0-100), a risk band (low/medium/high), and the contributing signals. "
+        "Aggregate all AI signals (OCR, MRZ, face, forensics, validation) into a single risk score. "
+        "Uses the integrated Risk Engine for weighted scoring. "
+        "Returns score (0-100), risk band, and contributing signals. "
         "This is the AI's RECOMMENDATION. The officer makes the final decision."
     ),
 )
@@ -239,52 +308,33 @@ async def compute_risk_assessment(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # 2. Load the latest result from each module (if available)
+    # 2. Load the latest result from each module
     from app.models.mrz_result import MrzResult
     from app.models.ocr_result import OcrResult
     from app.models.face_verification import FaceVerification
     from app.models.forensics_result import ForensicsResult
 
-    # Latest MRZ result for any document in this case
-    mrz_q = await db.execute(
-        select(MrzResult)
-        .where(MrzResult.case_id == case_id)
-        .order_by(MrzResult.created_at.desc())
-        .limit(1)
-    )
-    mrz_result = mrz_q.scalar_one_or_none()
+    async def latest(model):
+        q = await db.execute(
+            select(model)
+            .where(model.case_id == case_id)
+            .order_by(model.created_at.desc())
+            .limit(1)
+        )
+        return q.scalar_one_or_none()
 
-    # Latest OCR result
-    ocr_q = await db.execute(
-        select(OcrResult)
-        .where(OcrResult.case_id == case_id)
-        .order_by(OcrResult.created_at.desc())
-        .limit(1)
-    )
-    ocr_result = ocr_q.scalar_one_or_none()
+    mrz_result = await latest(MrzResult)
+    ocr_result = await latest(OcrResult)
+    face_result = await latest(FaceVerification)
+    forensics_result = await latest(ForensicsResult)
 
-    # Latest face verification
-    face_q = await db.execute(
-        select(FaceVerification)
-        .where(FaceVerification.case_id == case_id)
-        .order_by(FaceVerification.created_at.desc())
-        .limit(1)
-    )
-    face_result = face_q.scalar_one_or_none()
+    # 3. Collect all signals
+    signals = _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_result)
 
-    # Latest forensics result
-    forensics_q = await db.execute(
-        select(ForensicsResult)
-        .where(ForensicsResult.case_id == case_id)
-        .order_by(ForensicsResult.created_at.desc())
-        .limit(1)
-    )
-    forensics_result = forensics_q.scalar_one_or_none()
+    # 4. Compute final score using teammate's RiskEngine
+    score, band = _compute_final_score(signals)
 
-    # 3. Compute risk score
-    score, band, signals = _compute_risk(mrz_result, ocr_result, face_result, forensics_result)
-
-    # 4. Store RiskAssessment
+    # 5. Store RiskAssessment in database
     from app.models.risk_assessment import RiskAssessment, RiskSignal
     assessment = RiskAssessment(
         case_id=case_id,
@@ -292,7 +342,7 @@ async def compute_risk_assessment(
         risk_band=band,
     )
     db.add(assessment)
-    await db.flush()  # Get assessment.id before adding signals
+    await db.flush()
 
     for sig in signals:
         db.add(RiskSignal(
@@ -301,12 +351,12 @@ async def compute_risk_assessment(
             **sig,
         ))
 
-    # 5. Update the case's risk cache
+    # 6. Update the case's risk cache
     case.risk_score = score
     case.risk_band = band
     case.status = "reviewed"
 
-    # 6. Audit log
+    # 7. Audit log
     db.add(AuditLog(
         user_id=PLACEHOLDER_OFFICER_ID,
         case_id=case_id,
@@ -317,7 +367,7 @@ async def compute_risk_assessment(
     await db.commit()
     await db.refresh(assessment)
 
-    # Reload signals
+    # Reload with signals
     from sqlalchemy.orm import selectinload
     result = await db.execute(
         select(RiskAssessment)
@@ -327,4 +377,3 @@ async def compute_risk_assessment(
     assessment = result.scalar_one()
 
     return RiskAssessmentOut.model_validate(assessment)
-
