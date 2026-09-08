@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verifai-ocr-mrz"
+version = "0.1.0"
+description = "VERIFAI OCR + MRZ Passport Verification Subsystem"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2.7.0",
+    "opencv-python-headless>=4.10.0",
+    "numpy>=1.26.0",
+    "pillow>=10.0.0",
+    "paddleocr>=2.8.0",
+    "paddlepaddle>=2.6.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai*", "ocr_mrz*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
