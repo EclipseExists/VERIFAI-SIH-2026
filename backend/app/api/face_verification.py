@@ -31,6 +31,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.db.session import get_db
 from app.models.case import Case, Document
@@ -159,7 +160,11 @@ async def run_face_verification(
     # ── 3. Call the AI module ─────────────────────────────────────
     error_message = None
     try:
-        result = _call_verify_faces(document.image_path, request.probe_face_path)
+        result = await run_in_threadpool(
+            _call_verify_faces, 
+            document.image_path, 
+            request.probe_face_path
+        )
         similarity_score = result["similarity_score"]
         band = result["band"]
     except HTTPException as e:

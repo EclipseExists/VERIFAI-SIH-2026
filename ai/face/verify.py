@@ -13,7 +13,7 @@ def _get_embedding(image_path: str):
             img_path=image_path,
             model_name="Facenet",
             detector_backend="opencv",
-            enforce_detection=True
+            enforce_detection=False
         )
     except ValueError as e:
         raise FaceVerificationError(

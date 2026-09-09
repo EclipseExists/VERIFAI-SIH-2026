@@ -30,6 +30,8 @@ import "./App.css";
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
+  const [probeFile, setProbeFile] = useState(null);
+  const [probePreviewUrl, setProbePreviewUrl] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [screen, setScreen] = useState("upload");
 
@@ -49,6 +51,7 @@ function App() {
   ]);
 
   const fileInputRef = useRef(null);
+  const probeInputRef = useRef(null);
 
   const updateStep = (index, status) => {
     setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, status } : s)));
@@ -62,6 +65,15 @@ function App() {
     }
   };
 
+
+  const handleProbeFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProbeFile(file);
+      setProbePreviewUrl(URL.createObjectURL(file));
+    }
+  };
+
   const handleDrop = (e) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -72,6 +84,8 @@ function App() {
   };
 
   const resetAll = () => {
+    setProbeFile(null);
+    setProbePreviewUrl(null);
     setSelectedFile(null);
     setPreviewUrl(null);
     setResults(null);
@@ -93,7 +107,7 @@ function App() {
   // THE MAIN PIPELINE — calls all backend endpoints in order
   // ================================================================
   const handleBeginVerification = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !probeFile) { setErrorMsg("Please upload both a passport and a selfie."); return; }
     setScreen("processing");
     setErrorMsg(null);
 
@@ -103,6 +117,7 @@ function App() {
       const newCaseId = caseRes.data.id;
       setCaseId(newCaseId);
 
+
       // Step 0b: Upload document
       const formData = new FormData();
       formData.append("doc_type", "passport");
@@ -110,6 +125,14 @@ function App() {
       const docRes = await api.post(`/cases/${newCaseId}/documents`, formData);
       const newDocId = docRes.data.id;
       setDocumentId(newDocId);
+
+      // Step 0c: Upload probe image
+      const probeFormData = new FormData();
+      probeFormData.append("doc_type", "probe_face");
+      probeFormData.append("file", probeFile);
+      const probeRes = await api.post(`/cases/${newCaseId}/documents`, probeFormData);
+      const uploadedProbePath = probeRes.data.image_path;
+
 
       // Step 1: OCR
       updateStep(0, "active");
@@ -143,7 +166,7 @@ function App() {
       try {
         await api.post(`/cases/${newCaseId}/face-verification`, {
           document_id: newDocId,
-          probe_face_path: "../data/passports/passport_genuine.png",
+          probe_face_path: uploadedProbePath,
         });
         updateStep(3, "done");
       } catch {
@@ -621,39 +644,56 @@ function App() {
 
           <label
             className="drop-zone"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
+            style={{ marginBottom: '20px' }}
           >
             <input
-              ref={fileInputRef}
               type="file"
               accept="image/*"
               onChange={handleFileChange}
             />
             {previewUrl ? (
-              <img src={previewUrl} alt="Preview" className="preview-img" />
+              <img src={previewUrl} alt="Passport Preview" className="preview-img" />
             ) : (
               <>
                 <FileImage size={34} />
-                <span className="drop-title">Choose or drag passport image</span>
-                <span className="drop-hint">PNG, JPG or JPEG</span>
+                <span className="drop-title">Choose passport image</span>
               </>
             )}
           </label>
 
-          {selectedFile && (
-            <div className="selected-file">
+          <h2>Upload live selfie (Probe)</h2>
+          <p className="muted">Provide a clear selfie for face verification.</p>
+
+          <label
+            className="drop-zone"
+          >
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleProbeFileChange}
+            />
+            {probePreviewUrl ? (
+              <img src={probePreviewUrl} alt="Selfie Preview" className="preview-img" />
+            ) : (
+              <>
+                <UserCheck size={34} />
+                <span className="drop-title">Choose selfie image</span>
+              </>
+            )}
+          </label>
+
+          {(selectedFile || probeFile) && (
+            <div className="selected-file" style={{ marginTop: '20px' }}>
               <div>
-                <strong>Selected document</strong>
-                <span>{selectedFile.name}</span>
+                <strong>Selected files</strong>
+                <span>Passport: {selectedFile ? "Ready" : "Missing"} | Selfie: {probeFile ? "Ready" : "Missing"}</span>
               </div>
-              <span className="file-ready">READY</span>
             </div>
           )}
 
           <button
             className="primary-btn"
-            disabled={!selectedFile}
+            disabled={!selectedFile || !probeFile}
             onClick={handleBeginVerification}
           >
             Begin verification
