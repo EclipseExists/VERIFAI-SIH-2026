@@ -12,7 +12,7 @@ def _get_embedding(image_path: str):
         result = DeepFace.represent(
             img_path=image_path,
             model_name="Facenet",
-            detector_backend="mtcnn",
+            detector_backend="opencv",
             enforce_detection=True
         )
     except ValueError as e:
