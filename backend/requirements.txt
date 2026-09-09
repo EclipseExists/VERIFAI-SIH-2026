@@ -19,7 +19,8 @@ email-validator>=2.0.0      # Validates email format in user registration
 
 # ── Authentication ────────────────────────────────────────────────
 python-jose[cryptography]>=3.3.0  # JWT token creation and verification
-passlib[bcrypt]>=1.7.4            # Password hashing (bcrypt)
+passlib[bcrypt]==1.7.4
+bcrypt==4.3.0           # Password hashing (bcrypt)
 
 # ── File Upload ───────────────────────────────────────────────────
 python-multipart>=0.0.9    # Required by FastAPI for file upload endpoints
