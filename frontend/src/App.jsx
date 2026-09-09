@@ -433,14 +433,14 @@ function App() {
                     <div className="field-row">
                       <span className="field-key">ELA Score</span>
                       <span className="field-val">
-                        {forensics.ela_score != null ? forensics.ela_score.toFixed(3) : "—"}
+                        {forensics.ela_score != null ? Number(forensics.ela_score).toFixed(3) : "—"}
                       </span>
                     </div>
                     <div className="field-row">
                       <span className="field-key">Noise Score</span>
                       <span className="field-val">
                         {forensics.noise_inconsistency_score != null
-                          ? forensics.noise_inconsistency_score.toFixed(3)
+                          ? Number(forensics.noise_inconsistency_score).toFixed(3)
                           : "—"}
                       </span>
                     </div>
