@@ -79,15 +79,44 @@ def parse_td3_mrz(line1: str, line2: str) -> IdentityData:
             f"Invalid TD3 line lengths: line1={len(line1)}, line2={len(line2)}. Expected 44 characters each."
         )
 
+    # Line 2 fields (parsed first to get nationality for context)
+    raw_passport_num = line2[0:9].replace('<', '').strip()
+    nationality = line2[10:13].replace('<', '').strip()
+
     # Document Type & Issuing State
     doc_type = line1[0:2].replace('<', '').strip() or "P"
-    issuing_state = line1[2:5].replace('<', '').strip()
 
-    # Name breakdown (Line 1: 5..44)
-    name_section = line1[5:44]
-    name_parts = name_section.split('<<', 1)
-    surname = name_parts[0].replace('<', ' ').strip()
-    given_names = name_parts[1].replace('<', ' ').strip() if len(name_parts) > 1 else ""
+    # Name breakdown (Line 1: 5..44 or 2..44)
+    # Check if characters 2..5 match the 3-letter country code or if '<<' is in standard name zone
+    line1_content = line1[5:].rstrip('<')
+    if line1[2:5] == nationality or '<<' in line1_content:
+        # Standard TD3: 2-character prefix + 3-char issuing state + Surname << Given Names (or mononym)
+        issuing_state = line1[2:5].replace('<', '').strip()
+        if '<<' in line1_content:
+            name_parts = line1_content.split('<<', 1)
+            surname = name_parts[0].replace('<', ' ').strip()
+            given_names = name_parts[1].replace('<', ' ').strip()
+        else:
+            surname = line1_content.replace('<', ' ').strip()
+            given_names = ""
+    elif '<<' in line1[2:].rstrip('<'):
+        name_parts = line1[2:].rstrip('<').split('<<', 1)
+        surname = name_parts[0].replace('<', ' ').strip()
+        given_names = name_parts[1].replace('<', ' ').strip()
+        issuing_state = nationality or line1[2:5].replace('<', '').strip()
+    else:
+        # Fallback for single '<' delimiter format (e.g., P<SURNAME<GIVEN<NAME)
+        tokens = [t for t in line1[2:].split('<') if t]
+        if len(tokens) >= 2:
+            surname = tokens[0]
+            given_names = " ".join(tokens[1:])
+        elif len(tokens) == 1:
+            surname = tokens[0]
+            given_names = ""
+        else:
+            surname = ""
+            given_names = ""
+        issuing_state = nationality or (line1[2:5].replace('<', '').strip() if len(line1) >= 5 else "")
 
     if surname and given_names:
         full_name = f"{surname} {given_names}"
@@ -95,10 +124,6 @@ def parse_td3_mrz(line1: str, line2: str) -> IdentityData:
         full_name = surname
     else:
         full_name = given_names or "UNKNOWN"
-
-    # Line 2 fields
-    raw_passport_num = line2[0:9].replace('<', '').strip()
-    nationality = line2[10:13].replace('<', '').strip()
 
     raw_dob = line2[13:19]
     iso_dob = parse_mrz_date(raw_dob, is_expiry=False)

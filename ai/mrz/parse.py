@@ -28,7 +28,7 @@ def parse_mrz(image_path: str, engine_type: str = "paddle") -> Dict[str, Any]:
         return {
             "mrz_present": False,
             "parsed_fields": {},
-            "checksum_valid": False,
+            "checksum_valid": None,
             "checksum_details": [],
             "raw_lines": [],
             "_stub": False,

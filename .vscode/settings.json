@@ -1,3 +1,7 @@
 {
-    "antigravity.enableInlineDiff": false
+    "antigravity.enableInlineDiff": false,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/backend",
+        "${workspaceFolder}"
+    ]
 }

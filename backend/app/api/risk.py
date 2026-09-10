@@ -44,13 +44,84 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
     """
     signals = []
 
+    # ── Cross-Field Consistency (VIZ vs MRZ) ───────────────────────
+    has_cross_mismatch = False
+    if (
+        ocr_result
+        and not ocr_result.is_stub
+        and ocr_result.structured_fields
+        and mrz_result
+        and not mrz_result.is_stub
+        and mrz_result.mrz_present
+        and mrz_result.parsed_fields
+    ):
+        ocr_fields = ocr_result.structured_fields
+        mrz_fields = mrz_result.parsed_fields
+
+        # 1. DOB Consistency
+        ocr_dob = ocr_fields.get("dob")
+        mrz_dob = mrz_fields.get("date_of_birth")
+        if ocr_dob and mrz_dob and str(ocr_dob).strip() != str(mrz_dob).strip():
+            has_cross_mismatch = True
+            signals.append({
+                "signal_name": "dob_mismatch",
+                "direction": "increases_risk",
+                "magnitude": 1.0,
+                "explanation": (
+                    f"Visual Inspection Zone DOB ({ocr_dob}) does not match "
+                    f"MRZ encoded DOB ({mrz_dob}). Strong indicator of visual tampering or invalid MRZ."
+                ),
+                "source_module": "consistency",
+            })
+            signals.append({
+                "signal_name": "mrz_visual_mismatch",
+                "direction": "increases_risk",
+                "magnitude": 1.0,
+                "explanation": (
+                    f"Conflicting birth dates between visual zone ({ocr_dob}) and MRZ ({mrz_dob})."
+                ),
+                "source_module": "consistency",
+            })
+
+        # 2. Document Number Consistency
+        ocr_doc = (ocr_fields.get("doc_number") or "").replace("<", "").strip().upper()
+        mrz_doc = (mrz_fields.get("passport_number") or "").replace("<", "").strip().upper()
+        if ocr_doc and mrz_doc and ocr_doc != mrz_doc:
+            has_cross_mismatch = True
+            signals.append({
+                "signal_name": "mrz_visual_mismatch",
+                "direction": "increases_risk",
+                "magnitude": 1.0,
+                "explanation": (
+                    f"Visual document number ({ocr_doc}) does not match "
+                    f"MRZ passport number ({mrz_doc})."
+                ),
+                "source_module": "consistency",
+            })
+
+        # 3. Expiry Date Consistency
+        ocr_exp = ocr_fields.get("expiry")
+        mrz_exp = mrz_fields.get("expiry_date")
+        if ocr_exp and mrz_exp and str(ocr_exp).strip() != str(mrz_exp).strip():
+            has_cross_mismatch = True
+            signals.append({
+                "signal_name": "mrz_visual_mismatch",
+                "direction": "increases_risk",
+                "magnitude": 1.0,
+                "explanation": (
+                    f"Visual expiry date ({ocr_exp}) does not match "
+                    f"MRZ expiry date ({mrz_exp})."
+                ),
+                "source_module": "consistency",
+            })
+
     # ── MRZ Signals ────────────────────────────────────────────────
     if mrz_result and not mrz_result.is_stub:
         if not mrz_result.mrz_present:
             signals.append({
                 "signal_name": "mrz_missing",
                 "direction": "increases_risk",
-                "magnitude": 25.0,
+                "magnitude": 1.0,
                 "explanation": "No Machine-Readable Zone (MRZ) detected on the document.",
                 "source_module": "mrz",
             })
@@ -58,7 +129,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
             signals.append({
                 "signal_name": "mrz_checksum_failure",
                 "direction": "increases_risk",
-                "magnitude": 40.0,
+                "magnitude": 1.0,
                 "explanation": (
                     "MRZ checksum validation failed. Per ICAO 9303, this indicates "
                     "the document data may have been altered."
@@ -66,13 +137,14 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
                 "source_module": "mrz",
             })
         elif mrz_result.checksum_valid is True:
-            signals.append({
-                "signal_name": "quality_check_passed",
-                "direction": "decreases_risk",
-                "magnitude": 10.0,
-                "explanation": "All MRZ checksums validated. Document data is internally consistent.",
-                "source_module": "mrz",
-            })
+            if not has_cross_mismatch:
+                signals.append({
+                    "signal_name": "quality_check_passed",
+                    "direction": "decreases_risk",
+                    "magnitude": 1.0,
+                    "explanation": "All MRZ checksums validated. Document data is internally consistent.",
+                    "source_module": "mrz",
+                })
 
     # ── Face Verification Signals ──────────────────────────────────
     if face_result:
@@ -80,7 +152,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
             signals.append({
                 "signal_name": "face_mismatch",
                 "direction": "increases_risk",
-                "magnitude": 45.0,
+                "magnitude": 1.0,
                 "explanation": (
                     f"Face similarity score {face_result.similarity_score:.2f} — "
                     "below mismatch threshold. Person's face does not match the document photo."
@@ -91,7 +163,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
             signals.append({
                 "signal_name": "face_match_uncertain",
                 "direction": "increases_risk",
-                "magnitude": 20.0,
+                "magnitude": 1.0,
                 "explanation": (
                     f"Face similarity score {face_result.similarity_score:.2f} — uncertain zone. "
                     "Officer should manually compare faces."
@@ -102,7 +174,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
             signals.append({
                 "signal_name": "good_document_quality",
                 "direction": "decreases_risk",
-                "magnitude": 10.0,
+                "magnitude": 1.0,
                 "explanation": (
                     f"Face similarity score {face_result.similarity_score:.2f} — match. "
                     "Person's face matches the document photo."
@@ -113,7 +185,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
             signals.append({
                 "signal_name": "face_mismatch",
                 "direction": "increases_risk",
-                "magnitude": 15.0,
+                "magnitude": 0.5,
                 "explanation": "Face could not be detected in one of the images. Re-capture recommended.",
                 "source_module": "face",
             })
@@ -126,7 +198,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
                 signals.append({
                     "signal_name": "forensic_anomaly_detected",
                     "direction": "increases_risk",
-                    "magnitude": 35.0,
+                    "magnitude": 1.0,
                     "explanation": (
                         f"Forensic analysis indicates {prob:.0%} probability of digital manipulation."
                     ),
@@ -136,7 +208,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
                 signals.append({
                     "signal_name": "forensic_anomaly",
                     "direction": "increases_risk",
-                    "magnitude": 15.0,
+                    "magnitude": 0.7,
                     "explanation": (
                         f"Forensic analysis indicates {prob:.0%} probability of digital manipulation. "
                         "Minor anomalies detected."
@@ -154,7 +226,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
             signals.append({
                 "signal_name": "mandatory_field_missing",
                 "direction": "increases_risk",
-                "magnitude": 10.0,
+                "magnitude": 0.7,
                 "explanation": (
                     f"OCR confidence is low for: {', '.join(low_conf_fields)}. "
                     "These fields may be unreadable."
@@ -201,7 +273,7 @@ def _collect_signals(case_id, mrz_result, ocr_result, face_result, forensics_res
                     signals.append({
                         "signal_name": sig_name,
                         "direction": "increases_risk",
-                        "magnitude": 15.0,
+                        "magnitude": 1.0,
                         "explanation": check.explanation,
                         "source_module": "validation",
                     })
@@ -267,18 +339,20 @@ def _compute_final_score(signals):
 
     except Exception as e:
         print(f"[VERIFAI] RiskEngine fallback: {e}")
-        # Simple fallback: sum up magnitude directly
+        from ai.risk_engine.core.risk_config import default_risk_config
         score = 0.0
         for s in signals:
+            w = abs(default_risk_config.get_weight(s["signal_name"]))
+            mag = s["magnitude"] if s["magnitude"] <= 1.0 else s["magnitude"] / 100.0
             if s["direction"] == "increases_risk":
-                score += s["magnitude"]
+                score += mag * w
             elif s["direction"] == "decreases_risk":
-                score = max(0.0, score - s["magnitude"])
+                score = max(0.0, score - mag * w)
 
-        score = max(0.0, min(100.0, score))
+        score = round(max(0.0, min(100.0, score)), 2)
         if score >= 70:
             band = "high"
-        elif score >= 40:
+        elif score >= 30:
             band = "medium"
         else:
             band = "low"

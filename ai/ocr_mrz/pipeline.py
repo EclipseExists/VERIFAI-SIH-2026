@@ -135,6 +135,26 @@ class VerificationPipeline:
         # 3. MRZ Detection & Scoring
         detection_result = self.mrz_detector.detect_from_ocr_lines(ocr_lines)
 
+        # Resilient Fallback: If MRZ not confidently detected on enhanced grayscale,
+        # try on the color/deskewed image where fine security backgrounds do not disrupt text
+        if not detection_result.mrz_present or not detection_result.line1 or not detection_result.line2:
+            color_img = preprocessed.get("deskewed", image)
+            color_lines = self.ocr_engine.detect_text(color_img)
+            if color_lines:
+                color_det = self.mrz_detector.detect_from_ocr_lines(color_lines)
+                if color_det.mrz_present or color_det.confidence > detection_result.confidence:
+                    detection_result = color_det
+                    ocr_lines = color_lines
+
+        # Dedicated MRZ ROI fallback if still not found
+        if not detection_result.mrz_present or not detection_result.line1 or not detection_result.line2:
+            crop_lines = self.ocr_engine.detect_text(preprocessed["mrz_roi"])
+            if crop_lines:
+                crop_det = self.mrz_detector.detect_from_ocr_lines(crop_lines)
+                if crop_det.mrz_present or crop_det.confidence > detection_result.confidence:
+                    detection_result = crop_det
+                    ocr_lines.extend(crop_lines)
+
         if not detection_result.mrz_present or not detection_result.line1 or not detection_result.line2:
             risk_info = self.assess_risk(
                 mrz_present=False,
@@ -151,7 +171,8 @@ class VerificationPipeline:
                     confidence=detection_result.confidence,
                     lines_detected=len(ocr_lines),
                     corrections=[]
-                )
+                ),
+                raw_ocr_lines=ocr_lines
             )
 
         # 4. Controlled OCR Normalization & Correction
@@ -180,7 +201,8 @@ class VerificationPipeline:
                     lines_detected=len(ocr_lines),
                     corrections=corrections
                 ),
-                raw_mrz={"line1": norm_line1, "line2": norm_line2}
+                raw_mrz={"line1": norm_line1, "line2": norm_line2},
+                raw_ocr_lines=ocr_lines
             )
 
         # 6. ICAO Checksum Validation
@@ -208,7 +230,8 @@ class VerificationPipeline:
             mrz_validation=validation_result,
             ocr=ocr_meta,
             risk=risk_info,
-            raw_mrz={"line1": norm_line1, "line2": norm_line2}
+            raw_mrz={"line1": norm_line1, "line2": norm_line2},
+            raw_ocr_lines=ocr_lines
         )
 
     def process_bytes(self, image_bytes: bytes) -> PassportVerificationResponse:

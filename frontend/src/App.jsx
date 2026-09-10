@@ -330,7 +330,7 @@ function App() {
 
             <div className="risk-score-display">
               <div className="risk-number" style={{ color: riskColor(band) }}>
-                {typeof score === "number" ? score.toFixed(1) : "—"}
+                {score != null ? Number(score).toFixed(1) : "—"}
               </div>
               <div className="risk-out-of">/ 100</div>
             </div>
@@ -356,7 +356,7 @@ function App() {
                 <FileText size={18} />
                 <strong>OCR — Text Extraction</strong>
               </div>
-              {ocr?.structured_fields ? (
+              {ocr?.structured_fields && Object.keys(ocr.structured_fields).length > 0 ? (
                 <div className="field-list">
                   {Object.entries(ocr.structured_fields).map(([key, val]) => (
                     <div key={key} className="field-row">
@@ -366,7 +366,7 @@ function App() {
                   ))}
                 </div>
               ) : (
-                <p className="muted">No OCR data available</p>
+                <p className="muted">No visual text fields extracted</p>
               )}
             </section>
 
@@ -390,6 +390,54 @@ function App() {
                     <AlertTriangle size={20} /> NO MRZ DATA
                   </div>
                 )}
+                {Array.isArray(mrz?.checksum_details) && mrz.checksum_details.length > 0 && (
+                  <div
+                    className="checksum-details-grid"
+                    style={{
+                      marginTop: 10,
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: "6px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    {mrz.checksum_details.map((cd, idx) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        {cd.valid ? (
+                          <CheckCircle2 size={14} color="#22c55e" />
+                        ) : (
+                          <XCircle size={14} color="#ef4444" />
+                        )}
+                        <span style={{ color: cd.valid ? "#cbd5e1" : "#fca5a5" }}>
+                          {cd.field?.replace(/_/g, " ")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {ocr?.structured_fields?.dob &&
+                  mrz?.parsed_fields?.date_of_birth &&
+                  ocr.structured_fields.dob !== mrz.parsed_fields.date_of_birth && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: "8px 10px",
+                        background: "rgba(239, 68, 68, 0.15)",
+                        border: "1px solid rgba(239, 68, 68, 0.3)",
+                        borderRadius: 6,
+                        fontSize: "12px",
+                        color: "#fca5a5",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <AlertTriangle size={14} color="#ef4444" />
+                      <span>
+                        DOB Mismatch: Visual ({ocr.structured_fields.dob}) ≠ MRZ ({mrz.parsed_fields.date_of_birth})
+                      </span>
+                    </div>
+                  )}
                 {mrz?.parsed_fields && (
                   <div className="field-list" style={{ marginTop: 12 }}>
                     {Object.entries(mrz.parsed_fields).map(([k, v]) => (
@@ -425,7 +473,7 @@ function App() {
                       }}
                     >
                       {forensics.overall_manipulation_probability != null
-                        ? `${(forensics.overall_manipulation_probability * 100).toFixed(0)}%`
+                        ? `${(Number(forensics.overall_manipulation_probability) * 100).toFixed(0)}%`
                         : "—"}
                     </div>
                   </div>
@@ -488,7 +536,7 @@ function App() {
                       <span className="field-key">Similarity</span>
                       <span className="field-val">
                         {face.similarity_score != null
-                          ? `${(face.similarity_score * 100).toFixed(1)}%`
+                          ? `${(Number(face.similarity_score) * 100).toFixed(1)}%`
                           : "—"}
                       </span>
                     </div>

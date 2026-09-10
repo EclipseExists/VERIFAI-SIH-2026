@@ -112,3 +112,4 @@ class PassportVerificationResponse(BaseModel):
     ocr: Optional[OCRMetadata] = Field(default=None, description="OCR confidence and correction audit trail")
     risk: RiskIndicators = Field(..., description="Security and tampering risk assessment")
     raw_mrz: Optional[Dict[str, str]] = Field(default=None, description="Raw normalized MRZ lines")
+    raw_ocr_lines: Optional[List[OCRLine]] = Field(default=None, description="Extracted OCR lines from document")

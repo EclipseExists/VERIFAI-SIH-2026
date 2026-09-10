@@ -50,18 +50,18 @@ def analyze_document(image_path: str) -> Dict[str, Any]:
         ela_score = _compute_ela_score_from_image(str(ela_path))
         
     noise_score = noise_result.get("score")
-    if noise_score is None and noise_path.exists():
-        noise_score = _compute_noise_score_from_image(str(noise_path))
+    if noise_score is None:
+        noise_score = _compute_noise_score_from_image(image_path)
 
     # Calculate overall probability if scores exist
-    scores = [s for s in [ela_score, noise_score] if s is not None]
-    overall_prob = sum(scores) / len(scores) if scores else None
+    scores = [float(s) for s in [ela_score, noise_score] if s is not None]
+    overall_prob = round(float(sum(scores) / len(scores)), 3) if scores else None
 
     # Store visual forensic evidence matching backend schema
     forensic_evidence = {
-        "ela_score": ela_score,
+        "ela_score": float(ela_score) if ela_score is not None else None,
         "suspicious_regions": noise_result.get("suspicious_regions", []),
-        "noise_inconsistency_score": noise_score,
+        "noise_inconsistency_score": float(noise_score) if noise_score is not None else None,
         "overall_manipulation_probability": overall_prob,
         "ela_image_path": str(ela_path) if ela_path.exists() else None,
         "noise_image_path": str(noise_path) if noise_path.exists() else None
@@ -82,24 +82,52 @@ def _compute_ela_score_from_image(ela_image_path: str) -> float:
         arr = np.array(img, dtype=float)
         mean_val = arr.mean()
         score = min(mean_val / 50.0, 1.0)
-        return round(score, 3)
+        return round(float(score), 3)
     except Exception:
         return 0.15
 
 
-def _compute_noise_score_from_image(noise_image_path: str) -> float:
+def _compute_noise_score_from_image(image_path: str) -> float:
     """
-    Compute noise inconsistency from the noise evidence image.
-    High standard deviation = inconsistent noise patterns.
+    Compute localized noise inconsistency score across homogeneous/flat regions.
+    High inconsistency across flat regions indicates potential digital splicing.
     """
     try:
         from PIL import Image
         import numpy as np
-        img = Image.open(noise_image_path).convert("L")
+        img = Image.open(image_path).convert("L")
         arr = np.array(img, dtype=float)
-        std_val = arr.std()
-        score = min(std_val / 60.0, 1.0)
-        return round(score, 3)
+
+        # 3x3 discrete Laplacian operator
+        lap = (
+            arr[1:-1, :-2]
+            + arr[1:-1, 2:]
+            + arr[:-2, 1:-1]
+            + arr[2:, 1:-1]
+            - 4.0 * arr[1:-1, 1:-1]
+        )
+
+        block_size = 32
+        h, w = lap.shape
+        block_sigmas = []
+        for y in range(0, h - block_size + 1, block_size):
+            for x in range(0, w - block_size + 1, block_size):
+                blk = lap[y:y + block_size, x:x + block_size]
+                med = np.median(blk)
+                mad = np.median(np.abs(blk - med))
+                sigma = 1.4826 * mad
+                block_sigmas.append(sigma)
+
+        block_sigmas = np.array(block_sigmas)
+        valid = block_sigmas[(block_sigmas > 0.05) & (block_sigmas < np.percentile(block_sigmas, 80))]
+        if len(valid) < 5:
+            return 0.10
+
+        mean_s = np.mean(valid)
+        std_s = np.std(valid)
+        cv = std_s / (mean_s + 1e-5)
+        score = min(max((cv - 0.15) / 1.2, 0.05), 1.0)
+        return round(float(score), 3)
     except Exception:
         return 0.15
 
