@@ -26,8 +26,10 @@ if str(BACKEND_DIR) not in sys.path:
 from ai.ocr_mrz.checksum import validate_td3_checksums
 from ai.ocr_mrz.mrz_parser import parse_td3_mrz
 from ai.mrz.parse import parse_mrz
+from ai.forensics.analyze import analyze_document
+
 try:
-    from app.api.risk import _collect_signals, _compute_final_score
+    from app.api.risk import _collect_signals, _compute_final_score  # type: ignore[reportPrivateUsage,reportMissingImports]
 except ImportError:
     from backend.app.api.risk import _collect_signals, _compute_final_score  # type: ignore
 
