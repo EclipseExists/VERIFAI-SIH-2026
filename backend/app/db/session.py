@@ -33,12 +33,20 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# Render supplies PostgreSQL URLs using the generic postgres scheme. The
+# async SQLAlchemy engine needs the asyncpg driver explicitly selected.
+database_url = settings.DATABASE_URL
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif database_url.startswith("postgresql://"):
+    database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 # ── Create the async database engine ──────────────────────────────
 # The engine manages a pool of database connections.
 # echo=False means SQL queries are NOT printed to console
 # (set echo=True temporarily when debugging SQL issues)
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    database_url,
     echo=False,
     # Pool settings for development — PostgreSQL allows 100 connections
     # by default. We use a small pool since this is a prototype.

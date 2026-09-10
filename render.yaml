@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: verifai-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health/
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: verifai-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: /tmp/verifai-uploads
+
+databases:
+  - name: verifai-db
+    plan: free

@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
 
 # ── Set Working Directory ─────────────────────────────────────────
 WORKDIR /app
+ENV PYTHONPATH=/app/backend
 
 # ── Install Python Dependencies ───────────────────────────────────
 COPY backend/requirements.txt ./backend/requirements.txt
